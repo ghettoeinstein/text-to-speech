@@ -1,0 +1,6 @@
+{
+  "name": "AI TTS Studio & Audio Resampler",
+  "description": "Full-stack AI Text-to-Speech Studio with multi-voice synthesis, 8kHz/16kHz/24kHz audio resampling, phonetic dictionary, dialogue creator, and audio converter.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
