@@ -1,8 +1,18 @@
-node_modules/
-build/
-dist/
-coverage/
+# macOS
 .DS_Store
-*.log
-.env*
-!.env.example
+
+# Python
+__pycache__/
+*.pyc
+local-kokoro/.venv/
+
+# Downloaded Kokoro model files (large, fetched on first run)
+local-kokoro/*.onnx
+local-kokoro/*.bin
+
+# Generated voicemail recordings (not part of the app)
+Recordings/*.wav
+
+# Swift build artifacts / built app bundles
+LocalVoiceStudio/.build/
+*.app/
