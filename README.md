@@ -1,53 +1,96 @@
 # ForgeOS Voice Studio
 
-A private text-to-speech studio for macOS. Write a script, generate a voice,
-ship it. Everything runs on your machine — no accounts, no API keys, no
-network calls at synthesis time.
+A simple app that turns typed words into a spoken recording — like a
+phone greeting or an answering machine message — right on this Mac.
+Nothing is sent over the internet. Your words and your recordings stay
+on this computer.
 
-Software should do one thing and get out of your way. This does: turn text
-into a phone-ready recording, fast, with nothing leaving your Mac.
+## How to open the app
 
-## Why local
+1. Look on the **Desktop** for an icon called **ForgeOS Voice Studio**
+   (it has a little microphone picture on it).
+2. **Double-click** it to open.
+3. The first time you open it, the Mac may show a warning that it
+   doesn't recognize the app. That's normal — this app was made just
+   for you, not downloaded from a store. To open it anyway:
+   - Right-click (or hold Control and click) the icon
+   - Choose **Open** from the menu
+   - Click **Open** again to confirm
 
-Cloud TTS means your call scripts sit on someone else's server, metered by
-usage, gated by an API key you didn't ask for. That's a rent you don't need
-to pay for a solved problem. Kokoro and Whisper run fine on Apple Silicon —
-so the models live on disk, the compute happens here, and the only thing
-that leaves this machine is the file you choose to export.
+You only have to do that once. After that, double-clicking works
+normally.
 
-## What it does
+## How to make a recording
 
-- **Write or import.** Type a script, or drop in an existing recording and
-  get a locally-transcribed, fully editable transcript back.
-- **Generate.** Nine Kokoro voices, speed control, natural paragraph pauses,
-  lead-in/lead-out silence so phone systems don't clip the first word, gain
-  and presence controls for a cleaner, less muffled voice.
-- **Remix.** Every recording keeps its transcript and settings. Pull any
-  past recording back into the editor, tweak it, regenerate.
-- **Export for the phone.** Studio master plus 8 kHz PCM, G.711 µ-law/a-law,
-  and 16 kHz HD presets — pick whatever your PBX actually wants.
-- **Play it back properly.** Scrubbable playback, a real recordings library,
-  Finder reveal, one-click export.
-- **Swap the engine.** Local Kokoro by default. Point it at a running
-  [VoiceStudio](https://github.com/debpalash/VoiceStudio) instance instead,
-  and it speaks OpenAI-compatible REST underneath — same UI, different
-  backend.
+1. **Type or paste your words** into the big box in the middle of the
+   window, where it says "Script." You can also click the pencil
+   icon to clear it and start fresh, or use the menu to bring back
+   the sample greeting.
+2. Give it a **title** in the box above the script — this is just the
+   file name it will be saved under.
+3. Pick a **voice** from the dropdown list near the top (try a few —
+   you can always change your mind).
+4. Click the big **Generate** button.
+5. Wait a few seconds. The recording will play automatically when
+   it's ready.
 
-## How it's built
+That's it — you've made a voice recording.
 
-A native SwiftUI app ([`LocalVoiceStudio/`](LocalVoiceStudio)) drives a small
-local Python bridge ([`local-kokoro/`](local-kokoro)) that wraps
-[Kokoro](https://github.com/thewh1teagle/kokoro-onnx) for synthesis and
-[Whisper](https://github.com/openai/whisper) for transcription. No servers,
-no daemons — the app shells out to a script, gets a file back.
+## Listening back
+
+- Every recording you make is saved in the list on the left, with the
+  words shown underneath the title so you can remember what's in it.
+- Click any recording in that list to select it, then use the
+  **Play / Pause** button and the sliding bar at the bottom of the
+  window to listen and skip around.
+
+## Fixing or changing a recording
+
+- Didn't like how it sounded? Click the **circular arrow icon** next
+  to any past recording. This loads the words and settings back into
+  the editor so you can change something and make it again.
+- Want to type out something you already have as a sound file? Click
+  **Import Audio…** near the top of the script box, choose the sound
+  file, and the app will listen to it and type out the words for you
+  to edit.
+
+## Getting a recording off the computer
+
+- Click **Export…** at the bottom of the window to save a copy
+  anywhere you like (like a USB drive or a folder to email).
+- Click **Show in Finder** to see the file sitting on your computer
+  and drag it wherever you need it — for example, into your phone
+  system's website.
+
+## If something looks wrong
+
+If the app shows an orange warning at the top saying it can't find
+its voice files, ask whoever set this up for you to check — it just
+means a folder or file has moved.
+
+---
+
+## For whoever maintains this app
+
+The sections below are for setting the app up or rebuilding it after
+a code change. Everyday use only needs the instructions above.
+
+### What it is
+
+A native SwiftUI app ([`LocalVoiceStudio/`](LocalVoiceStudio)) that drives a
+small local Python bridge ([`local-kokoro/`](local-kokoro)) wrapping
+[Kokoro](https://github.com/thewh1teagle/kokoro-onnx) for speech synthesis
+and [Whisper](https://github.com/openai/whisper) for transcription. No
+servers, no daemons, no accounts — the app runs a script and gets a file
+back.
 
 ```
 LocalVoiceStudio/   SwiftUI app (Package.swift, Sources/)
 local-kokoro/        generate.py, transcribe.py — the synthesis bridge
-Recordings/           your output, never committed
+Recordings/           output, never committed to git
 ```
 
-## Setup
+### One-time setup
 
 ```sh
 cd local-kokoro
@@ -59,31 +102,43 @@ Download `kokoro-v1.0.int8.onnx` and `voices-v1.0.bin` from the
 [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx) into
 `local-kokoro/`.
 
+### Building the app after a code change
+
 ```sh
 cd LocalVoiceStudio
-./build-app.sh
+swift build -c release
 ```
 
-Open the resulting `ForgeOS Voice Studio.app`.
+Then copy the fresh binary into the app bundle(s) and re-sign, e.g.:
 
-## Requirements
+```sh
+BIN="LocalVoiceStudio/.build/release/LocalVoiceStudio"
+APP="ForgeOS Voice Studio.app"
+cp "$BIN" "$APP/Contents/MacOS/LocalVoiceStudio"
+codesign --force --deep --sign - "$APP"
+```
+
+Copy that same `.app` to the Desktop (or wherever it's launched from)
+so the person using it always gets the latest build.
+
+### Requirements
 
 - macOS on Apple Silicon
 - Python 3.10+
 - Xcode command line tools
 
-## Principles
+### Principles
 
-- **Local first.** The default path never touches the network. Anything
-  that does (like the VoiceStudio backend) is an explicit, visible switch.
-- **Files, not lock-in.** Every recording is a plain WAV on disk. No
-  database you can't read, no format you can't open elsewhere.
-- **Edit the source, not the output.** Transcripts are the source of truth.
-  Fix the words, regenerate the audio — don't patch a waveform.
-- **Small surface.** One app, one job. No dashboard, no plugin system, no
-  settings you'll never touch.
+- **Local first.** The default path never touches the network. An optional
+  switch can point synthesis at a running
+  [VoiceStudio](https://github.com/debpalash/VoiceStudio) server instead,
+  but that's opt-in and visible in the UI.
+- **Files, not lock-in.** Every recording is a plain WAV on disk.
+- **Edit the source, not the output.** Transcripts are the source of
+  truth — fix the words, regenerate the audio.
+- **Small surface.** One app, one job.
 
-## Roadmap
+### Roadmap
 
 - Native CoreML/Metal inference, replacing the Python/ONNX bridge
 - App Sandbox distribution, bundled model + G2P runtime, notarized DMG
