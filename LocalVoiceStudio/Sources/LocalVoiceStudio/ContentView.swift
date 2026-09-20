@@ -14,6 +14,7 @@ struct ContentView: View {
                 Divider()
                 ScrollView {
                     VStack(spacing: 18) {
+                        backendCard
                         modelStatus
                         scriptCard
                         controlsCard
@@ -58,13 +59,16 @@ struct ContentView: View {
             } else {
                 List(selection: $selectedRecordingID) {
                     ForEach(studio.recordings) { recording in
-                        RecordingRow(recording: recording)
+                        RecordingRow(recording: recording, onRemix: { studio.remix(recording) })
                             .tag(recording.id)
                             .contextMenu {
                                 Button("Play Master") { studio.select(recording); studio.play(url: recording.masterURL) }
                                 if let phone = recording.phoneURL {
                                     Button("Play Phone Version") { studio.select(recording, preferPhone: true); studio.play(url: phone) }
                                 }
+                                Divider()
+                                Button("Remix (load transcript + settings)") { studio.remix(recording) }
+                                Button("Copy Transcript") { studio.copyTranscript(recording) }
                                 Divider()
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([recording.masterURL]) }
                                 Button("Delete", role: .destructive) { studio.delete(recording) }
@@ -104,6 +108,42 @@ struct ContentView: View {
         .background(.bar)
     }
 
+    private var backendCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Speech Backend", systemImage: "cpu").font(.headline)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { studio.backend },
+                    set: { studio.setBackend($0) }
+                )) {
+                    ForEach(SpeechBackend.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 280)
+            }
+            if studio.backend == .voiceStudio {
+                HStack(spacing: 10) {
+                    Circle().fill(studio.voiceStudioReachable ? .green : .red).frame(width: 8, height: 8)
+                    Text(studio.voiceStudioReachable ? "VoiceStudio reachable" : "VoiceStudio not reachable — is it running?")
+                        .font(.caption).foregroundStyle(.secondary)
+                    TextField("http://localhost:3900", text: Binding(
+                        get: { studio.voiceStudioURLString },
+                        set: { studio.updateVoiceStudioURL($0) }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .font(.caption)
+                    Button("Check Again") { Task { await studio.refreshVoiceStudioStatus() } }
+                        .controlSize(.small)
+                    Spacer()
+                }
+            }
+        }
+        .cardStyle()
+    }
+
     private var modelStatus: some View {
         Group {
             if !studio.modelReady {
@@ -127,9 +167,28 @@ struct ContentView: View {
             HStack {
                 Label("Script", systemImage: "text.alignleft").font(.headline)
                 Spacer()
-                Text("\(studio.wordCount) words · about \(studio.estimatedSeconds) sec")
-                    .font(.caption).foregroundStyle(.secondary)
+                if studio.isTranscribing {
+                    ProgressView().controlSize(.small)
+                    Text("Transcribing…").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("\(studio.wordCount) words · about \(studio.estimatedSeconds) sec")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Button {
+                    studio.importAudio()
+                } label: {
+                    Label("Import Audio…", systemImage: "waveform.badge.magnifyingglass")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!studio.transcriptionReady || studio.isTranscribing)
+                .help(studio.transcriptionReady
+                      ? "Upload a WAV/MP3 and transcribe it locally into an editable script"
+                      : "transcribe.py or the local Python environment is missing")
                 Menu {
+                    Button("Import Audio & Transcribe…") { studio.importAudio() }
+                        .disabled(!studio.transcriptionReady || studio.isTranscribing)
+                    Divider()
                     Button("Restore USSA call menu") { studio.restoreStarterScript() }
                     Button("Clear") { studio.script = "" }
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -174,6 +233,26 @@ struct ContentView: View {
                     Slider(value: $studio.paragraphPause, in: 0.2...1.8, step: 0.1)
                 }
             }
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { Text("LEAD-IN SILENCE").controlLabel(); Spacer(); Text(String(format: "%.1f sec", studio.leadInPause)).monospacedDigit().font(.caption) }
+                    Slider(value: $studio.leadInPause, in: 0.0...2.0, step: 0.1)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { Text("LEAD-OUT SILENCE").controlLabel(); Spacer(); Text(String(format: "%.1f sec", studio.leadOutPause)).monospacedDigit().font(.caption) }
+                    Slider(value: $studio.leadOutPause, in: 0.0...2.0, step: 0.1)
+                }
+            }
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { Text("GAIN").controlLabel(); Spacer(); Text(String(format: "%.1f dB", studio.gainDB)).monospacedDigit().font(.caption) }
+                    Slider(value: $studio.gainDB, in: 0.0...10.0, step: 0.5)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { Text("PRESENCE").controlLabel(); Spacer(); Text(String(format: "%.2f", studio.presence)).monospacedDigit().font(.caption) }
+                    Slider(value: $studio.presence, in: 0.0...0.5, step: 0.02)
+                }
+            }
             HStack {
                 Picker("Output preset", selection: $studio.outputMode) {
                     ForEach(OutputMode.allCases) { mode in Text(mode.rawValue).tag(mode) }
@@ -200,45 +279,86 @@ struct ContentView: View {
     }
 
     private var playerBar: some View {
-        HStack(spacing: 12) {
-            Button(action: studio.togglePlayback) {
-                Image(systemName: studio.isPlaying ? "pause.fill" : "play.fill").frame(width: 18)
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Text(formatTime(studio.playbackTime))
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                    .frame(width: 40, alignment: .trailing)
+                Slider(
+                    value: Binding(
+                        get: { studio.playbackTime },
+                        set: { studio.seek(to: $0) }
+                    ),
+                    in: 0...max(studio.playbackDuration, 0.01)
+                )
+                .disabled(studio.currentAudioURL == nil || studio.playbackDuration <= 0)
+                Text(formatTime(studio.playbackDuration))
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                    .frame(width: 40, alignment: .leading)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(studio.currentAudioURL == nil)
-            Button(action: studio.stopPlayback) { Image(systemName: "stop.fill") }
-                .buttonStyle(.borderless)
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+
+            HStack(spacing: 12) {
+                Button(action: studio.togglePlayback) {
+                    Image(systemName: studio.isPlaying ? "pause.fill" : "play.fill").frame(width: 18)
+                }
+                .buttonStyle(.borderedProminent)
                 .disabled(studio.currentAudioURL == nil)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(studio.currentAudioURL?.lastPathComponent ?? "No recording selected")
-                    .font(.subheadline.weight(.medium)).lineLimit(1)
-                Text(studio.currentAudioURL == nil ? "Generate a recording to begin" : "Local WAV audio")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button(action: studio.stopPlayback) { Image(systemName: "stop.fill") }
+                    .buttonStyle(.borderless)
+                    .disabled(studio.currentAudioURL == nil)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(studio.currentAudioURL?.lastPathComponent ?? "No recording selected")
+                        .font(.subheadline.weight(.medium)).lineLimit(1)
+                    Text(studio.currentAudioURL == nil ? "Generate a recording to begin" : "Local WAV audio")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Show in Finder", systemImage: "folder") { studio.revealCurrent() }
+                    .disabled(studio.currentAudioURL == nil)
+                Button("Export…", systemImage: "square.and.arrow.up") { studio.exportCurrent() }
+                    .disabled(studio.currentAudioURL == nil)
             }
-            Spacer()
-            Button("Show in Finder", systemImage: "folder") { studio.revealCurrent() }
-                .disabled(studio.currentAudioURL == nil)
-            Button("Export…", systemImage: "square.and.arrow.up") { studio.exportCurrent() }
-                .disabled(studio.currentAudioURL == nil)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 72)
         .background(.bar)
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 
 private struct RecordingRow: View {
     let recording: Recording
+    var onRemix: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(recording.title).font(.subheadline.weight(.medium)).lineLimit(1)
-            HStack {
-                Text(recording.voiceName)
-                Text("·")
-                Text(recording.createdAt, style: .relative)
-                if recording.phonePath != nil { Image(systemName: "phone.fill").font(.caption2) }
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(recording.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                if !recording.previewText.isEmpty {
+                    Text(recording.previewText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help("Copy transcript: right-click → Copy Transcript")
+                }
+                HStack {
+                    Text(recording.voiceName)
+                    Text("·")
+                    Text(recording.createdAt, style: .relative)
+                    if recording.phonePath != nil { Image(systemName: "phone.fill").font(.caption2) }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
-            .font(.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            Button(action: onRemix) { Image(systemName: "arrow.triangle.2.circlepath") }
+                .buttonStyle(.borderless)
+                .help("Load this transcript and its settings back into the editor to remix")
         }
         .padding(.vertical, 5)
     }

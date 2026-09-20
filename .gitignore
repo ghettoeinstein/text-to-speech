@@ -12,6 +12,7 @@ local-kokoro/*.bin
 
 # Generated voicemail recordings (not part of the app)
 Recordings/*.wav
+Recordings/*.txt
 
 # Swift build artifacts / built app bundles
 LocalVoiceStudio/.build/
